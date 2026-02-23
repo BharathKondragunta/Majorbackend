@@ -12,6 +12,7 @@ const EvidenceSchema = new mongoose.Schema({
     fileName: { type: String },
     filePath: { type: String },
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    currentCustodian: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     metadata: {
         deviceInfo: String,
         gpsCoordinates: String,

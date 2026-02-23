@@ -146,6 +146,16 @@ app.get('/api/auth/login-logs', authenticateToken, async (req, res) => {
     }
 });
 
+// 2.2 Auth: Get All Users (for transfer)
+app.get('/api/auth/users', authenticateToken, async (req, res) => {
+    try {
+        const users = await User.find({}, 'username email role clearance avatar');
+        res.status(200).json({ success: true, data: users });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // 3. Case: Create
 app.post('/api/cases', authenticateToken, async (req, res) => {
     try {
@@ -220,6 +230,7 @@ app.post('/api/evidence', authenticateToken, upload.single('file'), async (req, 
             filePath: req.file ? `/uploads/${req.file.filename}` : null,
             size: req.file ? `${(req.file.size / 1024).toFixed(2)} KB` : '0 KB',
             uploadedBy: req.user.id,
+            currentCustodian: req.user.id,
             metadata: metadata ? JSON.parse(metadata) : {}
         });
 
@@ -254,8 +265,89 @@ app.get('/api/evidence/case/:caseId', authenticateToken, async (req, res) => {
 // 6.1 Evidence: List All (Vault)
 app.get('/api/evidence', authenticateToken, async (req, res) => {
     try {
-        const evidence = await Evidence.find().sort({ createdAt: -1 });
+        const evidence = await Evidence.find()
+            .populate('uploadedBy', 'username')
+            .populate('currentCustodian', 'username')
+            .sort({ createdAt: -1 });
         res.status(200).json({ success: true, data: evidence });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 6.2 Evidence: Get Single Evidence
+app.get('/api/evidence/:id', authenticateToken, async (req, res) => {
+    try {
+        const id = req.params.id;
+        console.log(`🔍 Fetching evidence details for ID: ${id}`);
+
+        let query = { evidenceId: id };
+
+        // If the provided ID is a valid MongoDB ObjectId, also check the _id field
+        if (mongoose.Types.ObjectId.isValid(id)) {
+            query = { $or: [{ evidenceId: id }, { _id: id }] };
+        }
+
+        const evidence = await Evidence.findOne(query)
+            .populate('uploadedBy', 'username')
+            .populate('currentCustodian', 'username');
+
+        if (!evidence) {
+            console.warn(`⚠️ Evidence not found for query:`, query);
+            return res.status(404).json({ success: false, message: 'Evidence not found' });
+        }
+
+        res.status(200).json({ success: true, data: evidence });
+    } catch (error) {
+        console.error('❌ Error fetching evidence details:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 6.3 Evidence: Transfer Custody
+app.put('/api/evidence/:id/transfer', authenticateToken, async (req, res) => {
+    try {
+        const { receiverId, reason, location: transferLocation } = req.body;
+        const id = req.params.id;
+
+        let query = { evidenceId: id };
+        if (mongoose.Types.ObjectId.isValid(id)) {
+            query = { $or: [{ evidenceId: id }, { _id: id }] };
+        }
+
+        const evidence = await Evidence.findOne(query);
+        if (!evidence) return res.status(404).json({ success: false, message: 'Evidence not found' });
+
+        // Ensure current user is the current custodian
+        if (evidence.currentCustodian.toString() !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'You are not the current custodian of this evidence' });
+        }
+
+        const receiver = await User.findById(receiverId);
+        if (!receiver) return res.status(404).json({ success: false, message: 'Receiver not found' });
+
+        const previousCustodianId = evidence.currentCustodian;
+        evidence.currentCustodian = receiverId;
+        if (transferLocation) evidence.location = transferLocation;
+        await evidence.save();
+
+        // Log the transfer
+        await new Log({
+            action: 'Custody Transferred',
+            target: evidence.title,
+            caseId: evidence.caseId,
+            type: 'Evidence',
+            status: 'Transferred',
+            performedBy: req.user.id,
+            metadata: {
+                from: previousCustodianId,
+                to: receiverId,
+                reason,
+                location: transferLocation
+            }
+        }).save();
+
+        res.status(200).json({ success: true, message: 'Custody transferred successfully', data: evidence });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
