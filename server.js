@@ -10,6 +10,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 
+
 // Models
 const User = require('./models/User');
 const Case = require('./models/Case');
@@ -31,9 +32,16 @@ if (process.env.JWT_SECRET) {
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cors({
+    origin: "*",
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    optionsSuccessStatus: 200,
+}));
 
 // Static folder for file access
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
